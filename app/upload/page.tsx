@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useCallback } from "react"
+import { useRouter } from "next/navigation"
 import { DashboardLayout } from "@/components/dashboard-layout"
 import { Button } from "@/components/ui/button"
 import {
@@ -13,11 +14,24 @@ import {
   Settings2,
   Video,
   Scissors,
+  AlertCircle,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 type UploadMethod = "file" | "youtube"
-type ProcessingStatus = "idle" | "uploading" | "analyzing" | "generating" | "completed"
+type ProcessingStatus = "idle" | "uploading" | "analyzing" | "generating" | "completed" | "error"
+
+interface AnalysisResult {
+  video: {
+    id: string
+    title: string
+  }
+  clips: Array<{
+    id: string
+    title: string
+  }>
+  message: string
+}
 
 const processingSteps = [
   { id: "uploading", label: "Enviando vídeo", icon: Upload },
@@ -27,11 +41,15 @@ const processingSteps = [
 ]
 
 export default function UploadPage() {
-  const [method, setMethod] = useState<UploadMethod>("file")
+  const router = useRouter()
+  const [method, setMethod] = useState<UploadMethod>("youtube")
   const [youtubeUrl, setYoutubeUrl] = useState("")
+  const [videoTitle, setVideoTitle] = useState("")
   const [dragActive, setDragActive] = useState(false)
   const [status, setStatus] = useState<ProcessingStatus>("idle")
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [result, setResult] = useState<AnalysisResult | null>(null)
 
   // AI Settings
   const [cutsCount, setCutsCount] = useState(5)
@@ -65,23 +83,67 @@ export default function UploadPage() {
     }
   }
 
-  const simulateProcessing = async () => {
+  const processVideo = async () => {
+    setError(null)
     setStatus("uploading")
-    await new Promise((r) => setTimeout(r, 2000))
-    setStatus("analyzing")
-    await new Promise((r) => setTimeout(r, 3000))
-    setStatus("generating")
-    await new Promise((r) => setTimeout(r, 3000))
-    setStatus("completed")
+    
+    try {
+      // Small delay for UX
+      await new Promise(r => setTimeout(r, 500))
+      setStatus("analyzing")
+      
+      const response = await fetch('/api/videos/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: method === "youtube" ? youtubeUrl : `file://${uploadedFile?.name}`,
+          title: videoTitle || undefined,
+          settings: {
+            maxClips: cutsCount,
+            minDuration,
+            maxDuration,
+            detectHighlights,
+            generateCaptions: addCaptions,
+          }
+        })
+      })
+      
+      const data = await response.json()
+      
+      if (!response.ok) {
+        throw new Error(data.error || 'Erro ao processar vídeo')
+      }
+      
+      setStatus("generating")
+      await new Promise(r => setTimeout(r, 1000))
+      
+      setResult(data)
+      setStatus("completed")
+      
+    } catch (err) {
+      console.error('Error processing video:', err)
+      setError(err instanceof Error ? err.message : 'Erro desconhecido')
+      setStatus("error")
+    }
   }
 
   const handleSubmit = () => {
     if ((method === "file" && uploadedFile) || (method === "youtube" && youtubeUrl)) {
-      simulateProcessing()
+      processVideo()
     }
   }
 
+  const handleReset = () => {
+    setStatus("idle")
+    setError(null)
+    setResult(null)
+    setYoutubeUrl("")
+    setVideoTitle("")
+    setUploadedFile(null)
+  }
+
   const getCurrentStepIndex = () => {
+    if (status === "error") return -1
     return processingSteps.findIndex((step) => step.id === status)
   }
 
@@ -203,6 +265,20 @@ export default function UploadPage() {
                   <p className="mt-2 text-xs text-muted-foreground">
                     Cole a URL completa do vídeo que deseja processar
                   </p>
+                  
+                  {/* Optional Title */}
+                  <div className="mt-4">
+                    <label className="text-sm font-medium text-foreground">
+                      Título (opcional)
+                    </label>
+                    <input
+                      type="text"
+                      value={videoTitle}
+                      onChange={(e) => setVideoTitle(e.target.value)}
+                      placeholder="Deixe em branco para usar o título original"
+                      className="mt-2 h-11 w-full rounded-lg border border-input bg-secondary px-4 text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
+                  </div>
                 </div>
               )}
             </div>
@@ -341,6 +417,10 @@ export default function UploadPage() {
                 <div className="flex h-20 w-20 items-center justify-center rounded-full bg-primary/20">
                   <CheckCircle className="h-10 w-10 text-primary" />
                 </div>
+              ) : status === "error" ? (
+                <div className="flex h-20 w-20 items-center justify-center rounded-full bg-destructive/20">
+                  <AlertCircle className="h-10 w-10 text-destructive" />
+                </div>
               ) : (
                 <div className="flex h-20 w-20 items-center justify-center rounded-full bg-primary/20">
                   <Loader2 className="h-10 w-10 animate-spin text-primary" />
@@ -350,82 +430,90 @@ export default function UploadPage() {
               <h2 className="mt-6 text-2xl font-bold text-foreground">
                 {status === "completed"
                   ? "Processamento Concluído!"
+                  : status === "error"
+                  ? "Erro no Processamento"
                   : "Processando seu vídeo..."}
               </h2>
               <p className="mt-2 text-muted-foreground">
                 {status === "completed"
-                  ? "Seus cortes estão prontos para visualização"
+                  ? result?.message || `${result?.clips?.length || 0} cortes gerados com sucesso!`
+                  : status === "error"
+                  ? error || "Ocorreu um erro ao processar o vídeo"
                   : "Isso pode levar alguns minutos dependendo da duração do vídeo"}
               </p>
             </div>
 
             {/* Progress Steps */}
-            <div className="mx-auto mt-8 max-w-md">
-              {processingSteps.map((step, index) => {
-                const currentIndex = getCurrentStepIndex()
-                const isCompleted = index < currentIndex
-                const isCurrent = index === currentIndex
-                const Icon = step.icon
+            {status !== "error" && (
+              <div className="mx-auto mt-8 max-w-md">
+                {processingSteps.map((step, index) => {
+                  const currentIndex = getCurrentStepIndex()
+                  const isCompleted = index < currentIndex
+                  const isCurrent = index === currentIndex
+                  const Icon = step.icon
 
-                return (
-                  <div key={step.id} className="flex items-start gap-4">
-                    <div className="flex flex-col items-center">
-                      <div
-                        className={cn(
-                          "flex h-10 w-10 items-center justify-center rounded-full transition-all",
-                          isCompleted || isCurrent
-                            ? "bg-primary text-primary-foreground"
-                            : "bg-secondary text-muted-foreground"
-                        )}
-                      >
-                        {isCompleted ? (
-                          <CheckCircle className="h-5 w-5" />
-                        ) : isCurrent && status !== "completed" ? (
-                          <Loader2 className="h-5 w-5 animate-spin" />
-                        ) : (
-                          <Icon className="h-5 w-5" />
-                        )}
-                      </div>
-                      {index < processingSteps.length - 1 && (
+                  return (
+                    <div key={step.id} className="flex items-start gap-4">
+                      <div className="flex flex-col items-center">
                         <div
                           className={cn(
-                            "h-12 w-0.5 transition-all",
-                            isCompleted ? "bg-primary" : "bg-secondary"
+                            "flex h-10 w-10 items-center justify-center rounded-full transition-all",
+                            isCompleted || isCurrent
+                              ? "bg-primary text-primary-foreground"
+                              : "bg-secondary text-muted-foreground"
                           )}
-                        />
-                      )}
-                    </div>
-                    <div className="pb-12">
-                      <p
-                        className={cn(
-                          "font-medium",
-                          isCompleted || isCurrent
-                            ? "text-foreground"
-                            : "text-muted-foreground"
+                        >
+                          {isCompleted ? (
+                            <CheckCircle className="h-5 w-5" />
+                          ) : isCurrent && status !== "completed" ? (
+                            <Loader2 className="h-5 w-5 animate-spin" />
+                          ) : (
+                            <Icon className="h-5 w-5" />
+                          )}
+                        </div>
+                        {index < processingSteps.length - 1 && (
+                          <div
+                            className={cn(
+                              "h-12 w-0.5 transition-all",
+                              isCompleted ? "bg-primary" : "bg-secondary"
+                            )}
+                          />
                         )}
-                      >
-                        {step.label}
-                      </p>
-                      {isCurrent && status !== "completed" && (
-                        <p className="mt-1 text-sm text-muted-foreground">
-                          Em andamento...
+                      </div>
+                      <div className="pb-12">
+                        <p
+                          className={cn(
+                            "font-medium",
+                            isCompleted || isCurrent
+                              ? "text-foreground"
+                              : "text-muted-foreground"
+                          )}
+                        >
+                          {step.label}
                         </p>
-                      )}
+                        {isCurrent && status !== "completed" && (
+                          <p className="mt-1 text-sm text-muted-foreground">
+                            Em andamento...
+                          </p>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                )
-              })}
-            </div>
+                  )
+                })}
+              </div>
+            )}
 
-            {status === "completed" && (
+            {(status === "completed" || status === "error") && (
               <div className="mt-8 flex justify-center gap-4">
-                <Button variant="outline" onClick={() => setStatus("idle")}>
-                  Novo Upload
+                <Button variant="outline" onClick={handleReset}>
+                  {status === "error" ? "Tentar Novamente" : "Novo Upload"}
                 </Button>
-                <Button className="gap-2">
-                  <Scissors className="h-4 w-4" />
-                  Ver Cortes Gerados
-                </Button>
+                {status === "completed" && (
+                  <Button className="gap-2" onClick={() => router.push('/cortes')}>
+                    <Scissors className="h-4 w-4" />
+                    Ver Cortes Gerados
+                  </Button>
+                )}
               </div>
             )}
           </div>

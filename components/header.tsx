@@ -1,6 +1,6 @@
 "use client"
 
-import { Bell, Search, User, ChevronDown } from "lucide-react"
+import { Bell, Search, User, ChevronDown, LogOut, Settings, CreditCard, UserCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -10,13 +10,33 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { createClient } from "@/lib/supabase/client"
+import { useRouter } from "next/navigation"
+import useSWR from "swr"
+import Link from "next/link"
 
 interface HeaderProps {
   title: string
   description?: string
 }
 
+const fetcher = async () => {
+  const supabase = createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  return user
+}
+
 export function Header({ title, description }: HeaderProps) {
+  const router = useRouter()
+  const { data: user } = useSWR('user', fetcher)
+
+  const handleLogout = async () => {
+    const supabase = createClient()
+    await supabase.auth.signOut()
+    router.push('/auth/login')
+    router.refresh()
+  }
+
   return (
     <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-border bg-background/95 px-6 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div>
@@ -44,33 +64,57 @@ export function Header({ title, description }: HeaderProps) {
         </Button>
 
         {/* User Menu */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" className="flex items-center gap-2 px-2">
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/20">
-                <User className="h-4 w-4 text-primary" />
-              </div>
-              <div className="hidden flex-col items-start md:flex">
-                <span className="text-sm font-medium text-foreground">
-                  Usuário
-                </span>
-                <span className="text-xs text-muted-foreground">Plano Free</span>
-              </div>
-              <ChevronDown className="h-4 w-4 text-muted-foreground" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuLabel>Minha Conta</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem>Perfil</DropdownMenuItem>
-            <DropdownMenuItem>Faturamento</DropdownMenuItem>
-            <DropdownMenuItem>Configurações</DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem className="text-destructive">
-              Sair
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        {user ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" className="flex items-center gap-2 px-2">
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/20">
+                  <User className="h-4 w-4 text-primary" />
+                </div>
+                <div className="hidden flex-col items-start md:flex">
+                  <span className="text-sm font-medium text-foreground">
+                    {user.user_metadata?.full_name || user.email?.split('@')[0] || 'Usuário'}
+                  </span>
+                  <span className="text-xs text-muted-foreground">Plano Free</span>
+                </div>
+                <ChevronDown className="h-4 w-4 text-muted-foreground" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuLabel className="font-normal">
+                <div className="flex flex-col space-y-1">
+                  <p className="text-sm font-medium">{user.user_metadata?.full_name || 'Usuário'}</p>
+                  <p className="text-xs text-muted-foreground">{user.email}</p>
+                </div>
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem className="cursor-pointer">
+                <UserCircle className="mr-2 h-4 w-4" />
+                Perfil
+              </DropdownMenuItem>
+              <DropdownMenuItem className="cursor-pointer">
+                <CreditCard className="mr-2 h-4 w-4" />
+                Faturamento
+              </DropdownMenuItem>
+              <DropdownMenuItem className="cursor-pointer">
+                <Settings className="mr-2 h-4 w-4" />
+                Configurações
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem 
+                className="cursor-pointer text-destructive focus:text-destructive"
+                onClick={handleLogout}
+              >
+                <LogOut className="mr-2 h-4 w-4" />
+                Sair
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : (
+          <Link href="/auth/login">
+            <Button size="sm">Entrar</Button>
+          </Link>
+        )}
       </div>
     </header>
   )

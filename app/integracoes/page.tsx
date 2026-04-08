@@ -11,33 +11,40 @@ import {
   Settings,
   AlertCircle,
   Zap,
+  Loader2,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import useSWR, { mutate } from "swr"
 
-interface Platform {
+interface Integration {
+  id: string
+  platform: string
+  platform_username: string | null
+  is_active: boolean
+  metadata: {
+    followers?: number
+    simulated?: boolean
+    connectedAt?: string
+  } | null
+  updated_at: string
+}
+
+interface PlatformInfo {
   id: string
   name: string
   description: string
   icon: string
   color: string
-  connected: boolean
-  username?: string
-  followers?: string
-  lastSync?: string
   features: string[]
 }
 
-const platforms: Platform[] = [
+const platformsInfo: PlatformInfo[] = [
   {
     id: "tiktok",
     name: "TikTok",
     description: "Publique automaticamente no TikTok e alcance milhões de usuários",
     icon: "TT",
     color: "bg-gradient-to-br from-pink-500 to-cyan-500",
-    connected: true,
-    username: "@seuusuario",
-    followers: "12.5K",
-    lastSync: "Há 5 minutos",
     features: ["Publicação automática", "Agendamento", "Analytics"],
   },
   {
@@ -46,10 +53,6 @@ const platforms: Platform[] = [
     description: "Envie shorts diretamente para seu canal do YouTube",
     icon: "YT",
     color: "bg-red-600",
-    connected: true,
-    username: "Seu Canal",
-    followers: "8.2K",
-    lastSync: "Há 10 minutos",
     features: ["Upload automático", "Agendamento", "Thumbnails personalizadas"],
   },
   {
@@ -58,7 +61,6 @@ const platforms: Platform[] = [
     description: "Compartilhe reels no Instagram automaticamente",
     icon: "IG",
     color: "bg-gradient-to-br from-purple-600 via-pink-500 to-orange-400",
-    connected: false,
     features: ["Publicação automática", "Agendamento", "Stories"],
   },
   {
@@ -67,10 +69,6 @@ const platforms: Platform[] = [
     description: "Alcance o público do Kwai com seus vídeos curtos",
     icon: "KW",
     color: "bg-orange-500",
-    connected: true,
-    username: "@kwaiuser",
-    followers: "5.3K",
-    lastSync: "Há 1 hora",
     features: ["Publicação automática", "Agendamento"],
   },
   {
@@ -79,7 +77,6 @@ const platforms: Platform[] = [
     description: "Publique reels no Facebook e expanda seu alcance",
     icon: "FB",
     color: "bg-blue-600",
-    connected: false,
     features: ["Publicação automática", "Agendamento", "Cross-posting"],
   },
   {
@@ -88,53 +85,66 @@ const platforms: Platform[] = [
     description: "Compartilhe seus vídeos curtos no X",
     icon: "X",
     color: "bg-black",
-    connected: false,
     features: ["Publicação automática", "Threads"],
   },
 ]
 
+const fetcher = (url: string) => fetch(url).then(res => res.json())
+
 export default function IntegracoesPage() {
-  const [platformList, setPlatformList] = useState(platforms)
+  const { data, isLoading } = useSWR('/api/integrations', fetcher)
   const [connectingPlatform, setConnectingPlatform] = useState<string | null>(null)
+  const [disconnectingPlatform, setDisconnectingPlatform] = useState<string | null>(null)
+
+  const integrations: Integration[] = data?.integrations || []
+
+  const getIntegrationForPlatform = (platformId: string): Integration | undefined => {
+    return integrations.find(i => i.platform === platformId && i.is_active)
+  }
 
   const handleConnect = async (platformId: string) => {
     setConnectingPlatform(platformId)
-    // Simulate connection process
-    await new Promise((resolve) => setTimeout(resolve, 2000))
     
-    setPlatformList((prev) =>
-      prev.map((p) =>
-        p.id === platformId
-          ? {
-              ...p,
-              connected: true,
-              username: "@novousuario",
-              followers: "0",
-              lastSync: "Agora",
-            }
-          : p
-      )
-    )
-    setConnectingPlatform(null)
+    try {
+      const response = await fetch('/api/integrations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ platform: platformId })
+      })
+      
+      if (response.ok) {
+        mutate('/api/integrations')
+      }
+    } catch (error) {
+      console.error('Error connecting:', error)
+    } finally {
+      setConnectingPlatform(null)
+    }
   }
 
-  const handleDisconnect = (platformId: string) => {
-    setPlatformList((prev) =>
-      prev.map((p) =>
-        p.id === platformId
-          ? {
-              ...p,
-              connected: false,
-              username: undefined,
-              followers: undefined,
-              lastSync: undefined,
-            }
-          : p
-      )
-    )
+  const handleDisconnect = async (platformId: string) => {
+    setDisconnectingPlatform(platformId)
+    
+    try {
+      const response = await fetch(`/api/integrations?platform=${platformId}`, {
+        method: 'DELETE'
+      })
+      
+      if (response.ok) {
+        mutate('/api/integrations')
+      }
+    } catch (error) {
+      console.error('Error disconnecting:', error)
+    } finally {
+      setDisconnectingPlatform(null)
+    }
   }
 
-  const connectedCount = platformList.filter((p) => p.connected).length
+  const connectedCount = integrations.filter(i => i.is_active).length
+  
+  const totalFollowers = integrations
+    .filter(i => i.is_active && i.metadata?.followers)
+    .reduce((acc, i) => acc + (i.metadata?.followers || 0), 0)
 
   return (
     <DashboardLayout
@@ -149,7 +159,9 @@ export default function IntegracoesPage() {
               <CheckCircle className="h-6 w-6 text-primary" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-foreground">{connectedCount}</p>
+              <p className="text-2xl font-bold text-foreground">
+                {isLoading ? <Loader2 className="h-6 w-6 animate-spin" /> : connectedCount}
+              </p>
               <p className="text-sm text-muted-foreground">Plataformas Conectadas</p>
             </div>
           </div>
@@ -162,14 +174,7 @@ export default function IntegracoesPage() {
             </div>
             <div>
               <p className="text-2xl font-bold text-foreground">
-                {platformList
-                  .filter((p) => p.connected && p.followers)
-                  .reduce((acc, p) => {
-                    const num = parseFloat(p.followers!.replace(/[^0-9.]/g, ""))
-                    const multiplier = p.followers!.includes("K") ? 1000 : 1
-                    return acc + num * multiplier
-                  }, 0)
-                  .toLocaleString()}
+                {isLoading ? <Loader2 className="h-6 w-6 animate-spin" /> : totalFollowers.toLocaleString()}
               </p>
               <p className="text-sm text-muted-foreground">Seguidores Totais</p>
             </div>
@@ -183,7 +188,7 @@ export default function IntegracoesPage() {
             </div>
             <div>
               <p className="text-2xl font-bold text-foreground">
-                {platformList.length - connectedCount}
+                {isLoading ? <Loader2 className="h-6 w-6 animate-spin" /> : platformsInfo.length - connectedCount}
               </p>
               <p className="text-sm text-muted-foreground">Aguardando Conexão</p>
             </div>
@@ -197,15 +202,20 @@ export default function IntegracoesPage() {
           Todas as Plataformas
         </h2>
         <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {platformList.map((platform) => (
-            <PlatformCard
-              key={platform.id}
-              platform={platform}
-              isConnecting={connectingPlatform === platform.id}
-              onConnect={() => handleConnect(platform.id)}
-              onDisconnect={() => handleDisconnect(platform.id)}
-            />
-          ))}
+          {platformsInfo.map((platform) => {
+            const integration = getIntegrationForPlatform(platform.id)
+            return (
+              <PlatformCard
+                key={platform.id}
+                platform={platform}
+                integration={integration}
+                isConnecting={connectingPlatform === platform.id}
+                isDisconnecting={disconnectingPlatform === platform.id}
+                onConnect={() => handleConnect(platform.id)}
+                onDisconnect={() => handleDisconnect(platform.id)}
+              />
+            )
+          })}
         </div>
       </div>
 
@@ -268,20 +278,35 @@ export default function IntegracoesPage() {
 
 function PlatformCard({
   platform,
+  integration,
   isConnecting,
+  isDisconnecting,
   onConnect,
   onDisconnect,
 }: {
-  platform: Platform
+  platform: PlatformInfo
+  integration?: Integration
   isConnecting: boolean
+  isDisconnecting: boolean
   onConnect: () => void
   onDisconnect: () => void
 }) {
+  const isConnected = !!integration?.is_active
+  const followers = integration?.metadata?.followers
+  const lastSync = integration?.updated_at 
+    ? new Date(integration.updated_at).toLocaleString('pt-BR', {
+        day: '2-digit',
+        month: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    : null
+
   return (
     <div
       className={cn(
         "rounded-xl border bg-card p-6 transition-all",
-        platform.connected ? "border-primary/50" : "border-border"
+        isConnected ? "border-primary/50" : "border-border"
       )}
     >
       {/* Header */}
@@ -297,12 +322,12 @@ function PlatformCard({
           </div>
           <div>
             <h3 className="font-semibold text-foreground">{platform.name}</h3>
-            {platform.connected && platform.username && (
-              <p className="text-sm text-muted-foreground">{platform.username}</p>
+            {isConnected && integration?.platform_username && (
+              <p className="text-sm text-muted-foreground">{integration.platform_username}</p>
             )}
           </div>
         </div>
-        {platform.connected && (
+        {isConnected && (
           <div className="flex items-center gap-1">
             <div className="h-2 w-2 rounded-full bg-primary" />
             <span className="text-xs text-primary">Conectado</span>
@@ -326,24 +351,26 @@ function PlatformCard({
       </div>
 
       {/* Stats (if connected) */}
-      {platform.connected && (
+      {isConnected && (
         <div className="mt-4 flex items-center gap-4 border-t border-border pt-4">
           <div>
             <p className="text-lg font-semibold text-foreground">
-              {platform.followers}
+              {followers ? followers.toLocaleString() : '0'}
             </p>
             <p className="text-xs text-muted-foreground">Seguidores</p>
           </div>
-          <div className="ml-auto text-right">
-            <p className="text-xs text-muted-foreground">Última sincronização</p>
-            <p className="text-sm text-foreground">{platform.lastSync}</p>
-          </div>
+          {lastSync && (
+            <div className="ml-auto text-right">
+              <p className="text-xs text-muted-foreground">Última sincronização</p>
+              <p className="text-sm text-foreground">{lastSync}</p>
+            </div>
+          )}
         </div>
       )}
 
       {/* Actions */}
       <div className="mt-4 flex gap-2">
-        {platform.connected ? (
+        {isConnected ? (
           <>
             <Button variant="outline" size="sm" className="flex-1 gap-1">
               <RefreshCw className="h-4 w-4" />
@@ -357,8 +384,13 @@ function PlatformCard({
               size="sm"
               className="gap-1 text-destructive hover:text-destructive"
               onClick={onDisconnect}
+              disabled={isDisconnecting}
             >
-              <Trash2 className="h-4 w-4" />
+              {isDisconnecting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 className="h-4 w-4" />
+              )}
             </Button>
           </>
         ) : (
@@ -369,7 +401,7 @@ function PlatformCard({
           >
             {isConnecting ? (
               <>
-                <RefreshCw className="h-4 w-4 animate-spin" />
+                <Loader2 className="h-4 w-4 animate-spin" />
                 Conectando...
               </>
             ) : (
